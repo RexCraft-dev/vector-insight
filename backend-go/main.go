@@ -1,31 +1,35 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
+	"context"
 	"log"
-	"net/http"
 	"os"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/joho/godotenv"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type PlanResponse struct {
-	Strategy string `json:"strategy"`
+type User struct {
+	ID        int       `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	Handicap  float32   `json:"handicap"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func main() {
-	// Load .env
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, using environment variables")
+	dbURL := os.Getenv("DB_URL")
+	if dbURL == "" {
+		log.Fatal("DB_URL environment variable not set")
 	}
 
-	aiURL := os.Getenv("AI_SERVICE_URL")
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	ctx := context.Background()
+	dbpool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		log.Fatalf("Unable to connect to database: %v\n", err)
 	}
+	defer dbpool.Close()
 
 	app := fiber.New()
 
@@ -34,22 +38,42 @@ func main() {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
-	// AI plan proxy
-	app.Get("/plan", func(c *fiber.Ctx) error {
-		resp, err := http.Get(fmt.Sprintf("%s/plan", aiURL))
+	// Get all users
+	app.Get("/users", func(c *fiber.Ctx) error {
+		rows, err := dbpool.Query(ctx, "SELECT id, name, email, handicap, created_at FROM users ORDER BY id")
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "failed to reach AI service", "details": err.Error()})
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
 		}
-		defer resp.Body.Close()
+		defer rows.Close()
 
-		var plan PlanResponse
-		if err := json.NewDecoder(resp.Body).Decode(&plan); err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "invalid response from AI"})
+		var users []User
+		for rows.Next() {
+			var u User
+			if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.Handicap, &u.CreatedAt); err != nil {
+				return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+			}
+			users = append(users, u)
 		}
 
-		return c.JSON(plan)
+		return c.JSON(users)
 	})
 
-	log.Printf("Backend running on port %s", port)
-	app.Listen(fmt.Sprintf(":%s", port))
+	// Create a user
+	app.Post("/users", func(c *fiber.Ctx) error {
+		var u User
+		if err := c.BodyParser(&u); err != nil {
+			return c.Status(400).JSON(fiber.Map{"error": "invalid JSON"})
+		}
+
+		query := `INSERT INTO users (name, email, handicap) VALUES ($1, $2, $3) RETURNING id, created_at`
+		err := dbpool.QueryRow(ctx, query, u.Name, u.Email, u.Handicap).Scan(&u.ID, &u.CreatedAt)
+		if err != nil {
+			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		return c.JSON(u)
+	})
+
+	log.Println("Backend connected to DB and running on :8080")
+	app.Listen(":8080")
 }

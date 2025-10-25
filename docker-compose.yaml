@@ -8,6 +8,10 @@ services:
     depends_on:
       - ai
       - db
+    environment:
+      - AI_SERVICE_URL=http://ai:8000
+      - DB_URL=postgres://vector:vectorpass@db:5432/vector_insight
+      - PORT=8080
 
   ai:
     build: ./ai-python
