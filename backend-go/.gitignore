@@ -1,0 +1,23 @@
+# Python / Go build files
+__pycache__/
+*.pyc
+*.pyo
+*.db
+*.log
+
+# Virtual env
+venv/
+.venv/
+
+# Environment & config
+.env
+.env.*
+*.env
+
+# Docker
+postgres_data/
+*.pid
+
+# IDE
+.vscode/
+.idea/
